@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from blessing.redis_client import test_redis_connection
 import os
 from dotenv import load_dotenv
 
@@ -14,15 +15,17 @@ app = FastAPI(
 )
 
 # CORS Middleware — allows David's frontend to talk to your server
+# * means any frontend can connect for now
+# We'll restrict this to David's Vercel URL in Week 3
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # We'll restrict this to David's Vercel URL later
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Basic health check route — confirms server is running
+# Root endpoint — confirms server is running
 @app.get("/")
 async def root():
     return {
@@ -31,11 +34,12 @@ async def root():
         "message": "Server is live!"
     }
 
-# Health check endpoint
+# Health check endpoint — now actually tests Redis connection
 @app.get("/health")
 async def health_check():
+    redis_status = test_redis_connection()
     return {
-        "status": "healthy",
-        "redis": "not yet connected",
+        "status": "healthy" if redis_status else "degraded",
+        "redis": "connected ✅" if redis_status else "disconnected ❌",
         "supabase": "not yet connected"
     }
