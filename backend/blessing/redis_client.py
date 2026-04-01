@@ -1,9 +1,12 @@
 import redis
 import os
 from dotenv import load_dotenv
+from pathlib import Path
 
 # Load the .env file so we can read REDIS_URL, REDIS_HOST etc.
-load_dotenv()
+env_path = Path(__file__).parent.parent / ".env"
+load_dotenv(dotenv_path=env_path)
+
 
 # Read Redis credentials from your .env file
 REDIS_HOST = os.getenv("REDIS_HOST")
