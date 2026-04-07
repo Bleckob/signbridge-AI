@@ -12,6 +12,10 @@ from backend.session_manager import (
     get_all_sessions,
     get_session_count
 )
+from backend.supabase_client import test_supabase_connection
+from backend.pipeline import run_pipeline_listener
+from backend.latency import get_latency_stats
+import asyncio
 import os
 import json
 from dotenv import load_dotenv
@@ -23,9 +27,34 @@ load_dotenv(dotenv_path=env_path)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # --- STARTUP ---
     print("Starting SignBridge AI server...")
+    
+    # 1. Ensure Redis/Streams are ready
+    try:
+        create_all_streams()
+        print("All Redis streams ready ✅")
+    except Exception as e:
+        print(f"❌ Failed to initialize streams: {e}")
+
+    # 2. Start pipeline listener as a background task
+    # We store it in app.state so the shutdown block can see it
+    app.state.pipeline_task = asyncio.create_task(run_pipeline_listener())
+    print("Pipeline listener started in background ✅")
+
     yield
+
+    # --- SHUTDOWN ---
     print("SignBridge AI server shutting down...")
+    
+    # Cancel the background task we stored earlier
+    app.state.pipeline_task.cancel()
+    try:
+        await app.state.pipeline_task
+    except asyncio.CancelledError:
+        print("Pipeline listener stopped cleanly ✅")
+    except Exception as e:
+        print(f"Error during shutdown: {e}")
 
 # Create the FastAPI app
 app = FastAPI(
@@ -59,10 +88,11 @@ async def root():
 @app.get("/health")
 async def health_check():
     redis_status = test_redis_connection()
+    supabase_status = test_supabase_connection()
     return {
-        "status": "healthy" if redis_status else "degraded",
+        "status": "healthy" if redis_status and supabase_status else "degraded",
         "redis": "connected ✅" if redis_status else "disconnected ❌",
-        "supabase": "not yet connected",
+        "supabase": "connected ✅" if supabase_status else "disconnected ❌",
         "active_connections": len(manager.active_connections),
         "active_sessions": get_session_count()
     }
@@ -86,6 +116,17 @@ async def sessions_dashboard():
     return {
         "total_active_sessions": get_session_count(),
         "sessions": get_all_sessions()
+    }
+
+@app.get("/latency-stats")
+async def latency_stats():
+    """
+    Shows p50 and p95 latency for every pipeline stage.
+    Share this dashboard with your team at end of Week 2.
+    """
+    return {
+        "latency_budget_ms": 1500,
+        "stats": get_latency_stats()
     }
 
 # WebSocket endpoint — this is what David's frontend connects to
