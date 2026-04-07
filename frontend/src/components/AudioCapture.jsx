@@ -1,4 +1,5 @@
 import { useState, useRef } from "react";
+import { v4 as uuidv4 } from "uuid";
 
 export default function AudioCapture() {
   const [isRecording, setIsRecording] = useState(false);
@@ -9,13 +10,24 @@ export default function AudioCapture() {
   const audioContextRef = useRef(null);
   const processorRef = useRef(null);
   const chunksRef = useRef([]);
+  const socketRef = useRef(null);
 
   const startRecording = async () => {
     setError("");
 
     try {
-      // 🔌 Connect WebSocket
-      const socket = new WebSocket("ws://localhost:8000/ws/{session_id}");
+      // Prevent duplicate sockets
+      if (socketRef.current) {
+        socketRef.current.close();
+      }
+
+      // Generate session ID
+      const sessionId = uuidv4();
+
+      // Connect WebSocket
+      const socket = new WebSocket(
+        `ws://localhost:8000/ws/${sessionId}`
+      );
 
       socket.onopen = () => {
         console.log("🟢 WebSocket connected");
@@ -23,30 +35,35 @@ export default function AudioCapture() {
 
       socket.onerror = (err) => {
         console.error("WebSocket error:", err);
+        setError("WebSocket connection failed");
+      };
+
+      socket.onclose = () => {
+        console.log("🔴 WebSocket closed");
       };
 
       socketRef.current = socket;
 
-      // 🎤 Get mic
+      // Get microphone
       const stream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-  noiseSuppression: true,
-  echoCancellation: true,
-  autoGainControl: true,
-  channelCount: 1,
-  sampleRate: 16000,
-}
+        audio: {
+          noiseSuppression: true,
+          echoCancellation: true,
+          autoGainControl: true,
+          channelCount: 1,
+          sampleRate: 16000,
+        },
       });
 
       streamRef.current = stream;
 
       const audioContext = new (window.AudioContext ||
         window.webkitAudioContext)();
+
       audioContextRef.current = audioContext;
 
       const source = audioContext.createMediaStreamSource(stream);
 
-      // 🔥 Script processor (simple chunking)
       const processor = audioContext.createScriptProcessor(4096, 1, 1);
       processorRef.current = processor;
 
@@ -56,17 +73,43 @@ export default function AudioCapture() {
       processor.onaudioprocess = (e) => {
         const inputData = e.inputBuffer.getChannelData(0);
 
-        // Copy audio data
+        // 🔊 VAD (Volume Detection)
+        let sum = 0;
+        for (let i = 0; i < inputData.length; i++) {
+          sum += inputData[i] * inputData[i];
+        }
+        const rms = Math.sqrt(sum / inputData.length);
+
+        const THRESHOLD = 0.01;
+
+        if (rms > THRESHOLD) {
+          setIsSpeaking(true);
+        } else {
+          setIsSpeaking(false);
+        }
+
         const chunk = new Float32Array(inputData);
-        chunksRef.current.push(chunk);
 
-        // 📦 Batch (~250ms)
-        if (chunksRef.current.length >= 10) {
-          const batch = chunksRef.current.flat();
-          console.log("📦 Batch ready (~250ms):", batch.length);
+        // ✅ Send only when speaking
+        if (rms > THRESHOLD) {
+          chunksRef.current.push(chunk);
 
-          // Here is where WebSocket sending will go later
-          chunksRef.current = [];
+          if (chunksRef.current.length >= 10) {
+            const batch = chunksRef.current.flat();
+
+            if (socketRef.current?.readyState === WebSocket.OPEN) {
+              socketRef.current.send(
+                JSON.stringify({
+                  type: "audio_chunk",
+                  data: Array.from(batch),
+                })
+              );
+
+              console.log("📡 Sent audio batch (speaking)");
+            }
+
+            chunksRef.current = [];
+          }
         }
       };
 
@@ -74,8 +117,8 @@ export default function AudioCapture() {
       console.log("🎤 Streaming started");
 
     } catch (err) {
-      console.error(err);
-      setError("Error starting audio");
+      console.error("Start recording error:", err);
+      setError(err.message || "Error starting audio");
     }
   };
 
@@ -94,9 +137,13 @@ export default function AudioCapture() {
 
     if (socketRef.current) {
       socketRef.current.close();
+      socketRef.current = null;
     }
 
+    chunksRef.current = [];
     setIsRecording(false);
+    setIsSpeaking(false);
+
     console.log("🛑 Stopped streaming");
   };
 
@@ -114,7 +161,13 @@ export default function AudioCapture() {
         {isRecording ? "Stop" : "Start"}
       </button>
 
-      <p>{isRecording ? "🎙️ Streaming..." : "Idle"}</p>
+      <p>
+        {isRecording
+          ? isSpeaking
+            ? "🟢 Speaking..."
+            : "⚪ Silent"
+          : "Idle"}
+      </p>
 
       {error && <p style={styles.error}>{error}</p>}
     </div>
@@ -125,11 +178,9 @@ const styles = {
   container: {
     textAlign: "center",
     marginTop: "80px",
-    fontFamily: "sans-serif",
   },
   button: {
     padding: "12px 24px",
-    fontSize: "16px",
     border: "none",
     borderRadius: "8px",
     color: "#fff",
@@ -137,6 +188,5 @@ const styles = {
   },
   error: {
     color: "red",
-    marginTop: "10px",
   },
 };
