@@ -134,45 +134,66 @@ async def latency_stats():
 # Example URL: ws://localhost:8000/ws/session_abc123
 @app.websocket("/ws/{session_id}")
 async def websocket_endpoint(websocket: WebSocket, session_id: str):
-    # Step 1: Accept WebSocket connection
     await manager.connect(websocket, session_id)
-
-    # Step 2: Create a session record
     create_session(session_id)
 
     try:
         redis = get_redis()
 
-        # Step 3: Send welcome message
         await manager.send_message(session_id, {
             "type": "connection_established",
             "session_id": session_id,
             "message": "Connected to SignBridge AI ✅"
         })
 
-        # Step 4: Keep listening for incoming messages
         while True:
-            data = await websocket.receive_text()
-            payload = json.loads(data)
+            try:
+                # Wait for data but with a timeout of 30 seconds
+                # If no data comes in 30 seconds, send a ping
+                # This keeps the connection alive during silent gaps
+                data = await asyncio.wait_for(
+                    websocket.receive_text(),
+                    timeout=30.0
+                )
 
-            # Update session activity every time data arrives
-            update_session_activity(session_id)
+                payload = json.loads(data)
 
-            # Push audio data onto Redis stream
-            redis.xadd("audio-chunks", {
-                "session_id": session_id,
-                "data": json.dumps(payload)
-            })
+                # Handle ping messages from Confidence's client
+                if payload.get("type") == "ping":
+                    await manager.send_message(session_id, {
+                        "type": "pong",
+                        "session_id": session_id
+                    })
+                    continue
 
-            # Confirm receipt
-            await manager.send_message(session_id, {
-                "type": "received",
-                "session_id": session_id,
-                "message": "Audio chunk received and queued ✅"
-            })
+                update_session_activity(session_id)
+
+                redis.xadd("audio-chunks", {
+                    "session_id": session_id,
+                    "data": json.dumps(payload)
+                })
+
+                await manager.send_message(session_id, {
+                    "type": "received",
+                    "session_id": session_id,
+                    "message": "Audio chunk received and queued ✅"
+                })
+
+            except asyncio.TimeoutError:
+                # No data received in 30 seconds
+                # Send a ping to check if client is still there
+                try:
+                    await manager.send_message(session_id, {
+                        "type": "ping",
+                        "session_id": session_id
+                    })
+                    print(f"Ping sent to session {session_id} — keeping alive")
+                except Exception:
+                    # Client didn't respond — connection is truly dead
+                    print(f"Session {session_id} — no response to ping, closing")
+                    break
 
     except WebSocketDisconnect:
-        # Clean up when user disconnects
         manager.disconnect(session_id)
         close_session(session_id)
         print(f"Session {session_id} disconnected cleanly")
