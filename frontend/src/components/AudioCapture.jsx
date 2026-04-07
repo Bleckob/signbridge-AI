@@ -14,8 +14,28 @@ export default function AudioCapture() {
     setError("");
 
     try {
+      // 🔌 Connect WebSocket
+      const socket = new WebSocket("ws://localhost:8000/ws/{session_id}");
+
+      socket.onopen = () => {
+        console.log("🟢 WebSocket connected");
+      };
+
+      socket.onerror = (err) => {
+        console.error("WebSocket error:", err);
+      };
+
+      socketRef.current = socket;
+
+      // 🎤 Get mic
       const stream = await navigator.mediaDevices.getUserMedia({
-        audio: true,
+      audio: {
+  noiseSuppression: true,
+  echoCancellation: true,
+  autoGainControl: true,
+  channelCount: 1,
+  sampleRate: 16000,
+}
       });
 
       streamRef.current = stream;
@@ -40,10 +60,7 @@ export default function AudioCapture() {
         const chunk = new Float32Array(inputData);
         chunksRef.current.push(chunk);
 
-        // Approx log every few chunks
-        console.log("Chunk captured:", chunk.length);
-
-        // Optional: simulate ~250ms batching
+        // 📦 Batch (~250ms)
         if (chunksRef.current.length >= 10) {
           const batch = chunksRef.current.flat();
           console.log("📦 Batch ready (~250ms):", batch.length);
@@ -54,37 +71,38 @@ export default function AudioCapture() {
       };
 
       setIsRecording(true);
-      console.log("🎤 Chunking started");
+      console.log("🎤 Streaming started");
 
     } catch (err) {
       console.error(err);
-      setError("Microphone access denied.");
+      setError("Error starting audio");
     }
   };
 
   const stopRecording = () => {
     if (streamRef.current) {
-      streamRef.current.getTracks().forEach((track) => track.stop());
-      streamRef.current = null;
-    }
-
-    if (processorRef.current) {
-      processorRef.current.disconnect();
+      streamRef.current.getTracks().forEach((t) => t.stop());
     }
 
     if (audioContextRef.current) {
       audioContextRef.current.close();
     }
 
-    setIsRecording(false);
-    setIsSpeaking(false);
+    if (processorRef.current) {
+      processorRef.current.disconnect();
+    }
 
-    console.log("🛑 Stopped chunking");
+    if (socketRef.current) {
+      socketRef.current.close();
+    }
+
+    setIsRecording(false);
+    console.log("🛑 Stopped streaming");
   };
 
   return (
     <div style={styles.container}>
-      <h2>SignBridge Audio Chunking</h2>
+      <h2>SignBridge Live Audio</h2>
 
       <button
         onClick={isRecording ? stopRecording : startRecording}
@@ -93,14 +111,10 @@ export default function AudioCapture() {
           backgroundColor: isRecording ? "#dc2626" : "#16a34a",
         }}
       >
-        {isRecording ? "Stop Recording" : "Start Recording"}
+        {isRecording ? "Stop" : "Start"}
       </button>
 
-      <p>Status: {isRecording ? "🎙️ Chunking..." : "Idle"}</p>
-
-      <p>
-        Speech: {isSpeaking ? "🗣️ Speaking" : "🤫 Silent"}
-      </p>
+      <p>{isRecording ? "🎙️ Streaming..." : "Idle"}</p>
 
       {error && <p style={styles.error}>{error}</p>}
     </div>
