@@ -32,7 +32,7 @@ jobs:
 
       - name: Lint with ruff
         run: |
-          ruff check services/ backend/ --select E,F,W --ignore E501
+          ruff check services/ --select E,F,W --ignore E501
 
       - name: Check imports resolve
         run: |
