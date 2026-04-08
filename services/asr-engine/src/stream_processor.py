@@ -21,7 +21,6 @@ Usage:
 import json
 import time
 import base64
-import numpy as np
 import redis
 
 from config.asr_config import (
@@ -32,7 +31,6 @@ from config.asr_config import (
     REDIS_INPUT_STREAM,
     REDIS_OUTPUT_STREAM,
     REDIS_CONSUMER_GROUP,
-    SAMPLE_RATE,
     MAX_AUDIO_BUFFER,
 )
 from src.audio_preprocessor import AudioPreprocessor

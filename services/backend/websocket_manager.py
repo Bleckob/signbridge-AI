@@ -6,7 +6,7 @@ class WebSocketManager:
     """
     Manages all active WebSocket connections.
     Each user gets their own session identified by session_id.
-    Think of this as the telephone exchange — it knows who is 
+    Think of this as the telephone exchange — it knows who is
     connected and routes messages to the right person.
     """
 

@@ -4,7 +4,6 @@ from contextlib import asynccontextmanager
 from backend.redis_client import test_redis_connection, get_redis
 from backend.redis_streams import create_all_streams, get_stream_info
 from backend.websocket_manager import manager
-from contextlib import asynccontextmanager
 from backend.session_manager import (
     create_session,
     close_session,
@@ -16,7 +15,6 @@ from backend.supabase_client import test_supabase_connection
 from backend.pipeline import run_pipeline_listener
 from backend.latency import get_latency_stats
 import asyncio
-import os
 import json
 from dotenv import load_dotenv
 from pathlib import Path
@@ -29,7 +27,7 @@ load_dotenv(dotenv_path=env_path)
 async def lifespan(app: FastAPI):
     # --- STARTUP ---
     print("Starting SignBridge AI server...")
-    
+
     # 1. Ensure Redis/Streams are ready
     try:
         create_all_streams()
@@ -46,7 +44,7 @@ async def lifespan(app: FastAPI):
 
     # --- SHUTDOWN ---
     print("SignBridge AI server shutting down...")
-    
+
     # Cancel the background task we stored earlier
     app.state.pipeline_task.cancel()
     try:

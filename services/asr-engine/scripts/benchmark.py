@@ -138,7 +138,7 @@ def run_benchmark(data_dir: str):
     print("=" * 60)
     print(f"RESULTS: {len(results)} samples, Average WER: {avg_wer:.1%}")
     print(f"  {'PASS' if avg_wer < 0.25 else 'NEEDS IMPROVEMENT'}")
-    print(f"  Target: < 25% WER for Nigerian-accented English")
+    print("  Target: < 25% WER for Nigerian-accented English")
     print("=" * 60)
 
     # Save detailed results

@@ -21,7 +21,7 @@ def create_all_streams():
     """
     Creates all Redis streams if they don't already exist.
     This runs once when the server starts up.
-    Think of it as setting up all the conveyor belts 
+    Think of it as setting up all the conveyor belts
     before the factory opens.
     """
     redis = get_redis()
@@ -48,7 +48,7 @@ def push_to_stream(stream_name: str, session_id: str, data: dict):
     """
     Pushes data onto a Redis stream.
     Used by your server to send data to the next stage.
-    
+
     stream_name: which conveyor belt to use
     session_id: which user this data belongs to
     data: the actual content being sent
@@ -68,7 +68,7 @@ def push_to_stream(stream_name: str, session_id: str, data: dict):
 def read_from_stream(stream_name: str, last_id: str = "0"):
     """
     Reads messages from a Redis stream.
-    
+
     stream_name: which conveyor belt to read from
     last_id: read messages after this ID (0 means read from beginning)
     """

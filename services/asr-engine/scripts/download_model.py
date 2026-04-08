@@ -31,7 +31,7 @@ def download_model(model_size: str | None = None):
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
 
     # Loading the model triggers the download if not cached
-    model = WhisperModel(
+    WhisperModel(
         size,
         device=DEVICE,
         compute_type=COMPUTE_TYPE,

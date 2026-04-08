@@ -10,7 +10,6 @@ Pipeline position:
 
 import numpy as np
 import torch
-import io
 from scipy.signal import resample
 import noisereduce as nr
 from config.asr_config import SAMPLE_RATE, VAD_THRESHOLD, VAD_MIN_SILENCE

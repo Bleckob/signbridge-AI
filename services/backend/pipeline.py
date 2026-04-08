@@ -1,13 +1,12 @@
 import json
 import asyncio
-from datetime import datetime
 from pathlib import Path
 from dotenv import load_dotenv
 
 from backend.redis_client import get_redis
 from backend.supabase_client import get_sign_pose
 from backend.animation import assemble_animation_package, parse_gloss_from_nlp
-from backend.latency import StageTimer, record_latency
+from backend.latency import StageTimer
 from backend.websocket_manager import manager
 
 # Load environment variables
@@ -88,14 +87,14 @@ async def process_nlp_output(message_id: str, session_id: str, nlp_data: str):
             "data": json.dumps(animation_package)
         })
 
-        print(f"Animation pushed to session-result stream ✅")
+        print("Animation pushed to session-result stream ✅")
 
         # =============================================
         # STAGE 5: Send directly to David via WebSocket
         # This is faster than waiting for David to read Redis
         # =============================================
         await manager.send_message(session_id, animation_package)
-        print(f"Animation sent to David via WebSocket ✅")
+        print("Animation sent to David via WebSocket ✅")
 
     except Exception as e:
         print(f"Pipeline error for session {session_id}: {e}")
@@ -107,7 +106,7 @@ async def process_nlp_output(message_id: str, session_id: str, nlp_data: str):
 
         # Warn if we're close to or over the 1500ms budget
         if total_duration > 1500:
-            print(f"⚠️ WARNING: Pipeline exceeded 1500ms budget!")
+            print("⚠️ WARNING: Pipeline exceeded 1500ms budget!")
         elif total_duration > 1200:
             print(f"⚠️ CAUTION: Pipeline at {total_duration:.2f}ms — close to budget")
 
@@ -115,16 +114,16 @@ async def process_nlp_output(message_id: str, session_id: str, nlp_data: str):
 async def run_pipeline_listener():
     # ... your existing docstring ...
     redis = get_redis()
-    last_id = "$" 
+    last_id = "$"
 
     # --- ADD THIS LINE HERE ---
-    await asyncio.sleep(0.1) 
-    
+    await asyncio.sleep(0.1)
+
     print("Pipeline listener started — waiting for NLP output... 👂")
 
     while True:
         # --- ADD THIS LINE HERE (indented once) ---
-        await asyncio.sleep(0.01) 
+        await asyncio.sleep(0.01)
 
         try: # This 'try' must be lined up exactly under the 'await' above
             # ... all your existing Redis logic stays here ...
