@@ -1,8 +1,7 @@
 # this script reads directly from the bone_names.py, and executes the
 # the insert programmatically.
-# populates config table from bone_names.py 
+# populates config table from bone_names.py
 
-import json
 from dotenv import load_dotenv
 from supabase import create_client
 import os

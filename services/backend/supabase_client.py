@@ -43,10 +43,10 @@ def test_supabase_connection() -> bool:
 def get_sign_pose(gloss: str) -> dict:
     """
     Looks up a sign pose from Supabase by its gloss name.
-    
+
     gloss: the sign language word to look up
            Example: "HELLO", "DOCTOR", "MEDICINE"
-    
+
     Returns the pose data if found, or a placeholder if not found yet.
     This placeholder will be replaced when Isaac finishes his table.
     """

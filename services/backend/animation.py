@@ -10,13 +10,13 @@ def assemble_animation_package(
 ) -> Dict:
     """
     Assembles the final animation package that David's avatar needs.
-    
+
     session_id: which user this animation is for
     gloss_list: list of sign language words
                 Example: ["HELLO", "DOCTOR", "MEDICINE"]
     pose_data_list: list of pose data fetched from Supabase
                     One pose per gloss word
-    
+
     Returns a complete animation package ready to send to David.
     """
 
@@ -57,9 +57,9 @@ def assemble_animation_package(
 def parse_gloss_from_nlp(nlp_output: str) -> List[str]:
     """
     Parses the gloss list from Amos's NLP output.
-    
+
     nlp_output: the raw string that Amos pushes to nlp-output stream
-    
+
     Returns a list of gloss words.
     Example: "HELLO DOCTOR MEDICINE" → ["HELLO", "DOCTOR", "MEDICINE"]
     """
@@ -74,5 +74,5 @@ def parse_gloss_from_nlp(nlp_output: str) -> List[str]:
     except json.JSONDecodeError:
         # If not JSON, treat as plain space-separated string
         return nlp_output.strip().upper().split()
-    
+
     return []

@@ -1,6 +1,5 @@
 import time
 from typing import Dict, List
-from datetime import datetime
 from collections import defaultdict
 
 # In-memory storage for latency measurements
@@ -15,7 +14,7 @@ def record_latency(stage: str, duration_ms: float):
     Called every time a stage completes.
 
     stage: name of the pipeline stage
-           Example: "audio_capture", "asr_engine", "nlp_engine", 
+           Example: "audio_capture", "asr_engine", "nlp_engine",
                     "pose_lookup", "pipeline_total"
     duration_ms: how long the stage took in milliseconds
     """
@@ -93,7 +92,7 @@ def get_latency_stats() -> dict:
 class StageTimer:
     """
     A simple timer for measuring how long a stage takes.
-    
+
     Usage:
         timer = StageTimer("pose_lookup")
         timer.start()
