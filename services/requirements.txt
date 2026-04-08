@@ -8,3 +8,9 @@ sentry-sdk
 httpx
 pytest
 locust
+numpy
+scipy
+pydantic
+requests
+mediapipe
+opencv-python
