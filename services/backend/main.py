@@ -12,6 +12,10 @@ from backend.session_manager import (
     get_all_sessions,
     get_session_count
 )
+from backend.supabase_client import test_supabase_connection
+from backend.pipeline import run_pipeline_listener
+from backend.latency import get_latency_stats
+import asyncio
 import os
 import json
 from dotenv import load_dotenv
@@ -23,9 +27,34 @@ load_dotenv(dotenv_path=env_path)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # --- STARTUP ---
     print("Starting SignBridge AI server...")
+    
+    # 1. Ensure Redis/Streams are ready
+    try:
+        create_all_streams()
+        print("All Redis streams ready ✅")
+    except Exception as e:
+        print(f"❌ Failed to initialize streams: {e}")
+
+    # 2. Start pipeline listener as a background task
+    # We store it in app.state so the shutdown block can see it
+    app.state.pipeline_task = asyncio.create_task(run_pipeline_listener())
+    print("Pipeline listener started in background ✅")
+
     yield
+
+    # --- SHUTDOWN ---
     print("SignBridge AI server shutting down...")
+    
+    # Cancel the background task we stored earlier
+    app.state.pipeline_task.cancel()
+    try:
+        await app.state.pipeline_task
+    except asyncio.CancelledError:
+        print("Pipeline listener stopped cleanly ✅")
+    except Exception as e:
+        print(f"Error during shutdown: {e}")
 
 # Create the FastAPI app
 app = FastAPI(
@@ -59,10 +88,11 @@ async def root():
 @app.get("/health")
 async def health_check():
     redis_status = test_redis_connection()
+    supabase_status = test_supabase_connection()
     return {
-        "status": "healthy" if redis_status else "degraded",
+        "status": "healthy" if redis_status and supabase_status else "degraded",
         "redis": "connected ✅" if redis_status else "disconnected ❌",
-        "supabase": "not yet connected",
+        "supabase": "connected ✅" if supabase_status else "disconnected ❌",
         "active_connections": len(manager.active_connections),
         "active_sessions": get_session_count()
     }
@@ -88,50 +118,82 @@ async def sessions_dashboard():
         "sessions": get_all_sessions()
     }
 
+@app.get("/latency-stats")
+async def latency_stats():
+    """
+    Shows p50 and p95 latency for every pipeline stage.
+    Share this dashboard with your team at end of Week 2.
+    """
+    return {
+        "latency_budget_ms": 1500,
+        "stats": get_latency_stats()
+    }
+
 # WebSocket endpoint — this is what David's frontend connects to
 # session_id is a unique ID for each user's session
 # Example URL: ws://localhost:8000/ws/session_abc123
 @app.websocket("/ws/{session_id}")
 async def websocket_endpoint(websocket: WebSocket, session_id: str):
-    # Step 1: Accept WebSocket connection
     await manager.connect(websocket, session_id)
-
-    # Step 2: Create a session record
     create_session(session_id)
 
     try:
         redis = get_redis()
 
-        # Step 3: Send welcome message
         await manager.send_message(session_id, {
             "type": "connection_established",
             "session_id": session_id,
             "message": "Connected to SignBridge AI ✅"
         })
 
-        # Step 4: Keep listening for incoming messages
         while True:
-            data = await websocket.receive_text()
-            payload = json.loads(data)
+            try:
+                # Wait for data but with a timeout of 30 seconds
+                # If no data comes in 30 seconds, send a ping
+                # This keeps the connection alive during silent gaps
+                data = await asyncio.wait_for(
+                    websocket.receive_text(),
+                    timeout=30.0
+                )
 
-            # Update session activity every time data arrives
-            update_session_activity(session_id)
+                payload = json.loads(data)
 
-            # Push audio data onto Redis stream
-            redis.xadd("audio-chunks", {
-                "session_id": session_id,
-                "data": json.dumps(payload)
-            })
+                # Handle ping messages from Confidence's client
+                if payload.get("type") == "ping":
+                    await manager.send_message(session_id, {
+                        "type": "pong",
+                        "session_id": session_id
+                    })
+                    continue
 
-            # Confirm receipt
-            await manager.send_message(session_id, {
-                "type": "received",
-                "session_id": session_id,
-                "message": "Audio chunk received and queued ✅"
-            })
+                update_session_activity(session_id)
+
+                redis.xadd("audio-chunks", {
+                    "session_id": session_id,
+                    "data": json.dumps(payload)
+                })
+
+                await manager.send_message(session_id, {
+                    "type": "received",
+                    "session_id": session_id,
+                    "message": "Audio chunk received and queued ✅"
+                })
+
+            except asyncio.TimeoutError:
+                # No data received in 30 seconds
+                # Send a ping to check if client is still there
+                try:
+                    await manager.send_message(session_id, {
+                        "type": "ping",
+                        "session_id": session_id
+                    })
+                    print(f"Ping sent to session {session_id} — keeping alive")
+                except Exception:
+                    # Client didn't respond — connection is truly dead
+                    print(f"Session {session_id} — no response to ping, closing")
+                    break
 
     except WebSocketDisconnect:
-        # Clean up when user disconnects
         manager.disconnect(session_id)
         close_session(session_id)
         print(f"Session {session_id} disconnected cleanly")
