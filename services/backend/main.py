@@ -14,10 +14,12 @@ from backend.session_manager import (
 from backend.supabase_client import test_supabase_connection
 from backend.pipeline import run_pipeline_listener
 from backend.latency import get_latency_stats
+from backend.sentry_config import init_sentry
 import asyncio
 import json
 from dotenv import load_dotenv
 from pathlib import Path
+
 
 # Load environment variables from .env file
 env_path = Path(__file__).parent.parent / ".env"
@@ -27,6 +29,8 @@ load_dotenv(dotenv_path=env_path)
 async def lifespan(app: FastAPI):
     # --- STARTUP ---
     print("Starting SignBridge AI server...")
+    #Initialize Sentry first so it catches any startup errors
+    init_sentry()
 
     # 1. Ensure Redis/Streams are ready
     try:
