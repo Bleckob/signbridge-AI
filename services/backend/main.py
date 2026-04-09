@@ -4,12 +4,21 @@ from contextlib import asynccontextmanager
 from backend.redis_client import test_redis_connection, get_redis
 from backend.redis_streams import create_all_streams, get_stream_info
 from backend.websocket_manager import manager
+from datetime import datetime
 from backend.session_manager import (
     create_session,
     close_session,
     update_session_activity,
     get_all_sessions,
-    get_session_count
+    get_session_count,
+    get_session
+)
+from backend.reconnection import (
+    register_disconnection,
+    attempt_reconnection,
+    complete_reconnection,
+    get_pending_reconnections,
+    cleanup_expired_reconnections
 )
 from backend.supabase_client import test_supabase_connection
 from backend.pipeline import run_pipeline_listener
@@ -17,6 +26,8 @@ from backend.latency import get_latency_stats
 from backend.sentry_config import init_sentry
 import asyncio
 import json
+import httpx
+import os
 from dotenv import load_dotenv
 from pathlib import Path
 
@@ -25,32 +36,67 @@ from pathlib import Path
 env_path = Path(__file__).parent.parent / ".env"
 load_dotenv(dotenv_path=env_path)
 
+async def keep_alive_ping():
+    """
+    Pings the server itself every 10 minutes.
+    Prevents Render free tier from putting server to sleep.
+    Only runs in production — not needed locally.
+    """
+    # Only run in production
+    if os.getenv("APP_ENV") != "production":
+        return
+
+    render_url = os.getenv("RENDER_URL")
+    if not render_url:
+        print("⚠️ RENDER_URL not set — keep alive disabled")
+        return
+
+    print("Keep alive started — pinging every 10 minutes ✅")
+
+    while True:
+        # Wait 10 minutes
+        await asyncio.sleep(600)
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(f"{render_url}/health")
+                print(f"Keep alive ping sent ✅ status: {response.status_code}")
+        except Exception as e:
+            print(f"Keep alive ping failed: {e}")
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # --- STARTUP ---
     print("Starting SignBridge AI server...")
-    #Initialize Sentry first so it catches any startup errors
+
     init_sentry()
 
-    # 1. Ensure Redis/Streams are ready
     try:
         create_all_streams()
         print("All Redis streams ready ✅")
     except Exception as e:
         print(f"❌ Failed to initialize streams: {e}")
 
-    # 2. Start pipeline listener as a background task
-    # We store it in app.state so the shutdown block can see it
     app.state.pipeline_task = asyncio.create_task(run_pipeline_listener())
     print("Pipeline listener started in background ✅")
+
+    async def periodic_cleanup():
+        while True:
+            await asyncio.sleep(60)
+            cleanup_expired_reconnections()
+
+    app.state.cleanup_task = asyncio.create_task(periodic_cleanup())
+    print("Reconnection cleanup task started ✅")
+
+    # Start keep alive for Render free tier
+    app.state.keep_alive_task = asyncio.create_task(keep_alive_ping())
 
     yield
 
     # --- SHUTDOWN ---
     print("SignBridge AI server shutting down...")
-
-    # Cancel the background task we stored earlier
     app.state.pipeline_task.cancel()
+    app.state.cleanup_task.cancel()
+    app.state.keep_alive_task.cancel()
     try:
         await app.state.pipeline_task
     except asyncio.CancelledError:
@@ -120,6 +166,19 @@ async def sessions_dashboard():
         "sessions": get_all_sessions()
     }
 
+@app.get("/reconnections")
+async def reconnection_status():
+    """
+    Shows all sessions currently waiting to reconnect.
+    Useful for monitoring dropped connections.
+    """
+    pending = get_pending_reconnections()
+    return {
+        "total_pending_reconnections": len(pending),
+        "reconnection_window_seconds": 60,
+        "pending": pending
+    }
+
 @app.get("/latency-stats")
 async def latency_stats():
     """
@@ -136,11 +195,27 @@ async def latency_stats():
 # Example URL: ws://localhost:8000/ws/session_abc123
 @app.websocket("/ws/{session_id}")
 async def websocket_endpoint(websocket: WebSocket, session_id: str):
-    await manager.connect(websocket, session_id)
-    create_session(session_id)
+    # Check if this is a reconnection attempt
+    reconnection_data = attempt_reconnection(session_id)
 
-    try:
-        redis = get_redis()
+    if reconnection_data:
+        # This is a reconnection — restore the session
+        print(f"Restoring session: {session_id}")
+        await manager.connect(websocket, session_id)
+        create_session(session_id)
+        complete_reconnection(session_id)
+
+        # Tell client they reconnected successfully
+        await manager.send_message(session_id, {
+            "type": "reconnection_successful",
+            "session_id": session_id,
+            "message": "Reconnected to SignBridge AI ✅",
+            "previous_disconnection": reconnection_data["disconnected_at"]
+        })
+    else:
+        # This is a brand new connection
+        await manager.connect(websocket, session_id)
+        create_session(session_id)
 
         await manager.send_message(session_id, {
             "type": "connection_established",
@@ -148,11 +223,12 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
             "message": "Connected to SignBridge AI ✅"
         })
 
+    try:
+        redis = get_redis()
+
         while True:
             try:
-                # Wait for data but with a timeout of 30 seconds
-                # If no data comes in 30 seconds, send a ping
-                # This keeps the connection alive during silent gaps
+                # Wait for data with 30 second timeout
                 data = await asyncio.wait_for(
                     websocket.receive_text(),
                     timeout=30.0
@@ -160,7 +236,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
 
                 payload = json.loads(data)
 
-                # Handle ping messages from Confidence's client
+                # Handle ping messages — keepalive from Confidence
                 if payload.get("type") == "ping":
                     await manager.send_message(session_id, {
                         "type": "pong",
@@ -182,23 +258,33 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                 })
 
             except asyncio.TimeoutError:
-                # No data received in 30 seconds
-                # Send a ping to check if client is still there
+                # No data for 30 seconds — send ping
                 try:
                     await manager.send_message(session_id, {
                         "type": "ping",
                         "session_id": session_id
                     })
-                    print(f"Ping sent to session {session_id} — keeping alive")
+                    session_data = get_session(session_id)
+                    ping_count = session_data.get("audio_chunks_received", 0) if session_data else 0
+                    if ping_count % 5 == 0:
+                        print(f"Ping sent to {session_id} — keeping alive")
+                    print(f"Ping sent to {session_id} — keeping alive")
                 except Exception:
-                    # Client didn't respond — connection is truly dead
-                    print(f"Session {session_id} — no response to ping, closing")
+                    print(f"Session {session_id} not responding — closing")
                     break
 
     except WebSocketDisconnect:
+        # Get session data before closing
+        session = get_session(session_id)
+        last_activity = session["last_activity"] if session else datetime.utcnow().isoformat()
+
+        # Register disconnection for potential reconnection
+        register_disconnection(session_id, last_activity)
+
+        # Clean up connection
         manager.disconnect(session_id)
         close_session(session_id)
-        print(f"Session {session_id} disconnected cleanly")
+        print(f"Session {session_id} disconnected — reconnection window open for {60}s")
 
     except Exception as e:
         print(f"Error in session {session_id}: {e}")
